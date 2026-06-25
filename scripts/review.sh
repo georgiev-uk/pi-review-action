@@ -72,7 +72,10 @@ run_axis() {  # $1 = skill dir name, $2 = output file
      --tools "$REVIEW_TOOLS" \
      --skill "$ACTION_PATH/skills/$skill" \
      "REVIEW_BASE=$REVIEW_BASE . Run the ${skill} review now and print only your Markdown section." \
-     > "$out" 2> "${out}.log" || echo "::warning::reviewer '$skill' exited non-zero"
+     > "$out" 2> "${out}.log"
+  local rc=$?
+  echo "$rc" > "${out}.rc"
+  return 0
 }
 
 run_axis review-standards "$WORK/standards.md" &
@@ -81,6 +84,15 @@ run_axis review-spec "$WORK/spec.md" &
 PID_SPEC=$!
 wait "$PID_STD" || true
 wait "$PID_SPEC" || true
+
+# Surface each reviewer's exit code + stderr so CI failures are diagnosable.
+for axis in standards spec; do
+  rc="$(cat "$WORK/${axis}.md.rc" 2>/dev/null || echo '?')"
+  if [[ "$rc" != "0" ]]; then
+    echo "::warning::reviewer '$axis' exited with rc=$rc"
+    echo "::group::${axis} stderr (pi)"; cat "$WORK/${axis}.md.log" 2>/dev/null; echo "::endgroup::"
+  fi
+done
 
 # Fallbacks so the summarizer always has both sections.
 [[ -s "$WORK/standards.md" ]] || printf '## Standards\n\n_Reviewer produced no output._\n' > "$WORK/standards.md"
@@ -100,6 +112,7 @@ pi -p --no-session \
 # If the summarizer failed, fall back to a deterministic concatenation.
 if [[ ! -s "$WORK/final.md" ]]; then
   echo "::warning::summarizer produced no output; using deterministic merge"
+  echo "::group::summarizer stderr (pi)"; cat "$WORK/final.log" 2>/dev/null; echo "::endgroup::"
   {
     echo "## 🤖 Code review (GLM 5.2 · pi)"
     echo
