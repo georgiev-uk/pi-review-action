@@ -36,6 +36,9 @@ envsubst '${CLOUDFLARE_ACCOUNT_ID}' \
   < "$ACTION_PATH/config/models.json.tmpl" \
   > "$HOME/.pi/agent/models.json"
 
+# Log the toolchain for traceability (no secrets — token is never printed).
+echo "pi $(pi --version 2>/dev/null) · reviewer=${MODEL_REVIEWER} · summarizer=${MODEL_SUMMARIZER}"
+
 # --- resolve / fetch the base ----------------------------------------------
 if ! git rev-parse --verify "${REVIEW_BASE}^{commit}" >/dev/null 2>&1; then
   echo "Base '${REVIEW_BASE}' not present locally; fetching…"
