@@ -56,7 +56,9 @@ jobs:
           api_token: ${{ secrets.CLOUDFLARE_API_TOKEN }}
 ```
 
-A copy-paste workflow is in [`.github/workflows/example.yml`](./.github/workflows/example.yml).
+A copy-paste workflow is in [`workflows/example.yml`](./workflows/example.yml) — drop it
+into your repo at `.github/workflows/code-review.yml`. (It lives outside `.github/` here
+so GitHub doesn't try to run the sample in this repo.)
 
 ### Secrets
 
