@@ -62,7 +62,7 @@ EOF
   post_and_exit "$WORK/skip.md" 0
 fi
 
-# --- stage 1: two single-axis reviewers, in parallel -----------------------
+# --- stage 1: two single-axis reviewers, sequential ------------------------
 export REVIEW_BASE   # visible to the skills' bash tool calls (git diff "$REVIEW_BASE...HEAD")
 
 # One reviewer pass, with retry-on-failure. pi against Workers AI can return

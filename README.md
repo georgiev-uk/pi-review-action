@@ -19,7 +19,7 @@ It posts a single **sticky PR comment** (updated in place) and a job summary. It
 ```
 pull_request ─► resolve base ─► [diff ≤ max_diff_lines?] ──no──► skip + comment
                                         │ yes
-                ┌───────────────────────┴───────────────────────┐   (parallel)
+                ┌───────────────────────┴───────────────────────┐   (sequential)
    pi: review-standards skill                       pi: review-spec skill
    model @cf/zai-org/glm-5.2                         model @cf/zai-org/glm-5.2
    (own git diff + file/issue lookup via bash/gh)
@@ -30,8 +30,10 @@ pull_request ─► resolve base ─► [diff ≤ max_diff_lines?] ──no─�
                     sticky PR comment + $GITHUB_STEP_SUMMARY
 ```
 
-pi has **no sub-agents**, so the two axes fan out at the workflow layer — each is its own
-pi process. See [`SYNC.md`](./SYNC.md) for how this differs from the upstream skill.
+pi has **no sub-agents**, so the two axes run as separate pi processes, one after the
+other. They run **sequentially** (not concurrently) to stay under Workers AI's per-model
+request-rate limit — two concurrent GLM-5.2 tool loops trip a 429. The axes stay fully
+isolated regardless. See [`SYNC.md`](./SYNC.md) for how this differs from the upstream skill.
 
 ## Usage
 
@@ -97,7 +99,7 @@ bash tool call** → flash completes a plain prompt.
 | Path | Purpose |
 |------|---------|
 | `action.yml` | Composite action: install pi, resolve base, run review. |
-| `scripts/review.sh` | Orchestrator: models.json, guardrail, parallel reviewers, summarizer, post. |
+| `scripts/review.sh` | Orchestrator: models.json, guardrail, sequential reviewers, summarizer, post. |
 | `scripts/diff-size.sh` | Changed-line count for the guardrail. |
 | `scripts/post-comment.sh` | Find-or-update sticky PR comment. |
 | `scripts/smoke.sh` | Local pre-flight check against Workers AI. |
