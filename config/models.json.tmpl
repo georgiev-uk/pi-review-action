@@ -1,0 +1,30 @@
+{
+  "providers": {
+    "cloudflare": {
+      "baseUrl": "https://api.cloudflare.com/client/v4/accounts/${CLOUDFLARE_ACCOUNT_ID}/ai/v1",
+      "api": "openai-completions",
+      "apiKey": "$CLOUDFLARE_API_TOKEN",
+      "authHeader": true,
+      "models": [
+        {
+          "id": "@cf/zai-org/glm-5.2",
+          "name": "GLM 5.2 (Workers AI)",
+          "reasoning": true,
+          "input": ["text"],
+          "contextWindow": 262144,
+          "maxTokens": 16384,
+          "cost": { "input": 1.40, "output": 4.40, "cacheRead": 0.26, "cacheWrite": 0 }
+        },
+        {
+          "id": "@cf/zai-org/glm-4.7-flash",
+          "name": "GLM 4.7 Flash (Workers AI)",
+          "reasoning": false,
+          "input": ["text"],
+          "contextWindow": 131072,
+          "maxTokens": 16384,
+          "cost": { "input": 0.06, "output": 0.40, "cacheRead": 0, "cacheWrite": 0 }
+        }
+      ]
+    }
+  }
+}

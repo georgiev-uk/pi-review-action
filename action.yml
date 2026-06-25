@@ -1,0 +1,83 @@
+name: "pi GLM code review"
+description: "Two-axis (Standards + Spec) PR review via the pi harness on Cloudflare Workers AI GLM 5.2. Advisory."
+author: "Martin Georgiev"
+branding:
+  icon: "check-circle"
+  color: "orange"
+
+inputs:
+  account_id:
+    description: "Cloudflare account id (host of the Workers AI endpoint)."
+    required: true
+  api_token:
+    description: "Cloudflare API token with Workers AI: Read. Pass from a repo secret."
+    required: true
+  base:
+    description: "Override the diff base ref. Defaults to the PR base branch."
+    required: false
+    default: ""
+  max_diff_lines:
+    description: "Skip the review if the diff exceeds this many changed lines."
+    required: false
+    default: "20000"
+  pi_version:
+    description: "Pinned @earendil-works/pi-coding-agent version."
+    required: false
+    default: "0.80.2"
+  model_reviewer:
+    description: "Workers AI model id for the two axis reviewers."
+    required: false
+    default: "@cf/zai-org/glm-5.2"
+  model_summarizer:
+    description: "Workers AI model id for the format-only summarizer."
+    required: false
+    default: "@cf/zai-org/glm-4.7-flash"
+  github_token:
+    description: "Token used to read issues and post the PR comment."
+    required: false
+    default: ${{ github.token }}
+
+runs:
+  using: "composite"
+  steps:
+    - name: Setup Node
+      uses: actions/setup-node@v4
+      with:
+        node-version: "20"
+
+    - name: Install pi (pinned)
+      shell: bash
+      run: npm install -g --ignore-scripts "@earendil-works/pi-coding-agent@${{ inputs.pi_version }}"
+
+    - name: Resolve diff base
+      id: base
+      shell: bash
+      env:
+        OVERRIDE: ${{ inputs.base }}
+        EVENT_BASE_SHA: ${{ github.event.pull_request.base.sha }}
+        EVENT_BASE_REF: ${{ github.event.pull_request.base.ref }}
+      run: |
+        if [[ -n "$OVERRIDE" ]]; then
+          echo "ref=$OVERRIDE" >> "$GITHUB_OUTPUT"
+        elif [[ -n "$EVENT_BASE_SHA" ]]; then
+          echo "ref=$EVENT_BASE_SHA" >> "$GITHUB_OUTPUT"
+        elif [[ -n "$EVENT_BASE_REF" ]]; then
+          echo "ref=origin/$EVENT_BASE_REF" >> "$GITHUB_OUTPUT"
+        else
+          echo "ref=HEAD~1" >> "$GITHUB_OUTPUT"
+        fi
+
+    - name: Run two-axis review
+      shell: bash
+      env:
+        CLOUDFLARE_ACCOUNT_ID: ${{ inputs.account_id }}
+        CLOUDFLARE_API_TOKEN: ${{ inputs.api_token }}
+        REVIEW_BASE: ${{ steps.base.outputs.ref }}
+        MAX_DIFF_LINES: ${{ inputs.max_diff_lines }}
+        MODEL_REVIEWER: ${{ inputs.model_reviewer }}
+        MODEL_SUMMARIZER: ${{ inputs.model_summarizer }}
+        ACTION_PATH: ${{ github.action_path }}
+        GH_TOKEN: ${{ inputs.github_token }}
+        GITHUB_TOKEN: ${{ inputs.github_token }}
+        PR_NUMBER: ${{ github.event.pull_request.number }}
+      run: bash "${{ github.action_path }}/scripts/review.sh"

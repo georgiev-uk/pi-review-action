@@ -1,0 +1,22 @@
+# Dogfood the action on its own PRs.
+name: Self-test
+on:
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  pull-requests: write
+  issues: read
+
+jobs:
+  review:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - uses: ./   # the action in this repo
+        with:
+          account_id: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+          api_token: ${{ secrets.CLOUDFLARE_API_TOKEN }}

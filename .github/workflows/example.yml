@@ -1,0 +1,29 @@
+# Copy this into a consumer repo at .github/workflows/code-review.yml
+name: Code review
+on:
+  pull_request:
+  workflow_dispatch:
+    inputs:
+      base:
+        description: "Diff base ref"
+        required: false
+
+permissions:
+  contents: read        # read the code
+  pull-requests: write  # post the sticky comment
+  issues: read          # Spec axis fetches referenced issues
+
+jobs:
+  review:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0   # reviewers diff against the base — full history required
+
+      - uses: your-org/pi-review-action@v1
+        with:
+          account_id: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+          api_token: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          base: ${{ inputs.base }}        # blank on pull_request → auto-detected
+          # max_diff_lines: "20000"       # optional override
