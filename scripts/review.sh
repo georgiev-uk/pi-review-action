@@ -65,25 +65,35 @@ fi
 # --- stage 1: two single-axis reviewers, in parallel -----------------------
 export REVIEW_BASE   # visible to the skills' bash tool calls (git diff "$REVIEW_BASE...HEAD")
 
+# One reviewer pass, with retry-on-failure. pi against Workers AI can return
+# 429 (rate limit) under load; back off and retry rather than fail the axis.
+# rc is captured with `|| rc=$?` so `set -e` doesn't abort before we record it.
 run_axis() {  # $1 = skill dir name, $2 = output file
-  local skill="$1" out="$2"
-  pi -p -a --no-session \
-     --provider cloudflare --model "$MODEL_REVIEWER" \
-     --tools "$REVIEW_TOOLS" \
-     --skill "$ACTION_PATH/skills/$skill" \
-     "REVIEW_BASE=$REVIEW_BASE . Run the ${skill} review now and print only your Markdown section." \
-     > "$out" 2> "${out}.log"
-  local rc=$?
+  local skill="$1" out="$2" rc=0 attempt
+  for attempt in 1 2 3; do
+    rc=0
+    pi -p -a --no-session \
+       --provider cloudflare --model "$MODEL_REVIEWER" \
+       --tools "$REVIEW_TOOLS" \
+       --skill "$ACTION_PATH/skills/$skill" \
+       "REVIEW_BASE=$REVIEW_BASE . Run the ${skill} review now and print only your Markdown section." \
+       > "$out" 2> "${out}.log" || rc=$?
+    if [[ "$rc" == "0" && -s "$out" ]]; then break; fi
+    if (( attempt < 3 )); then
+      local backoff=$(( attempt * 20 ))
+      echo "::warning::reviewer '$skill' attempt $attempt failed (rc=$rc); retrying in ${backoff}s"
+      sleep "$backoff"
+    fi
+  done
   echo "$rc" > "${out}.rc"
   return 0
 }
 
-run_axis review-standards "$WORK/standards.md" &
-PID_STD=$!
-run_axis review-spec "$WORK/spec.md" &
-PID_SPEC=$!
-wait "$PID_STD" || true
-wait "$PID_SPEC" || true
+# Sequential, not parallel: two concurrent GLM-5.2 tool loops burst past Workers
+# AI's request-rate limit (observed 429s). Running one axis at a time keeps the
+# request rate under the cap. The axes stay fully isolated — separate pi runs.
+run_axis review-standards "$WORK/standards.md"
+run_axis review-spec "$WORK/spec.md"
 
 # Surface each reviewer's exit code + stderr so CI failures are diagnosable.
 for axis in standards spec; do
