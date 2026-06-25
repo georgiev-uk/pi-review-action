@@ -36,6 +36,9 @@ envsubst '${CLOUDFLARE_ACCOUNT_ID}' \
   < "$ACTION_PATH/config/models.json.tmpl" \
   > "$HOME/.pi/agent/models.json"
 
+# Log the toolchain for traceability (no secrets — token is never printed).
+echo "pi $(pi --version 2>/dev/null) · reviewer=${MODEL_REVIEWER} · summarizer=${MODEL_SUMMARIZER}"
+
 # --- resolve / fetch the base ----------------------------------------------
 if ! git rev-parse --verify "${REVIEW_BASE}^{commit}" >/dev/null 2>&1; then
   echo "Base '${REVIEW_BASE}' not present locally; fetching…"
@@ -135,6 +138,25 @@ if [[ ! -s "$WORK/final.md" ]]; then
     echo "---"
     echo "<sub>Two-axis review via the pi harness on Cloudflare Workers AI. Advisory only.</sub>"
   } > "$WORK/final.md"
+fi
+
+# The summarizer (flash) sometimes wraps its whole reply in a ``` code fence,
+# which would render the entire comment as one code block on GitHub. If the
+# body is fenced top-and-bottom, unwrap it.
+if [[ "$(head -1 "$WORK/final.md")" == '```'* ]] && [[ "$(grep -c '^```' "$WORK/final.md")" -ge 2 ]]; then
+  echo "::warning::summarizer wrapped output in a code fence; unwrapping"
+  awk '
+    NR==1 && /^```/ { next }            # drop leading fence
+    { lines[++n] = $0 }
+    END {
+      last = n
+      while (last > 0 && lines[last] == "") last--   # ignore trailing blanks
+      for (i = 1; i <= n; i++) {
+        if (i == last && lines[i] ~ /^```$/) continue # drop trailing fence
+        print lines[i]
+      }
+    }
+  ' "$WORK/final.md" > "$WORK/final.unwrapped.md" && mv "$WORK/final.unwrapped.md" "$WORK/final.md"
 fi
 
 post_and_exit "$WORK/final.md" 0
