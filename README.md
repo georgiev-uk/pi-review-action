@@ -11,8 +11,14 @@ The review follows two independent axes (adapted from
 - **Standards** — does the diff follow the repo's documented coding standards?
 - **Spec** — does the diff faithfully implement the originating issue / PRD?
 
-It posts a single **sticky PR comment** (updated in place) and a job summary. It is
-**advisory** — findings never fail the job.
+It posts a **PR comment** and a job summary. It is **advisory** — findings never fail the job.
+
+**Incremental re-reviews.** Each comment records the head sha it reviewed. On a later push
+the action finds its newest prior comment: if that sha is unchanged it skips (nothing new);
+if new commits landed it reviews **only the diff since the last review**, feeds its prior
+review in as context, and posts a **new** follow-up comment (marked 🔁) that discusses just
+the new changes without repeating unchanged findings. If the branch was rebased/force-pushed
+so the prior sha is no longer an ancestor of HEAD, it falls back to a full review.
 
 ## How it works
 
@@ -27,7 +33,8 @@ pull_request ─► resolve base ─► [diff ≤ max_diff_lines?] ──no─�
                           pi: summarize skill (format-only + TL;DR)
                           model @cf/google/gemma-4-26b-a4b-it
                                         │
-                    sticky PR comment + $GITHUB_STEP_SUMMARY
+                    PR comment + $GITHUB_STEP_SUMMARY
+        (full diff, or only new commits since the last review comment)
 ```
 
 pi has **no sub-agents**, so the two axes run as separate pi processes, one after the
@@ -103,7 +110,7 @@ bash tool call** → Gemma completes a plain prompt.
 | `action.yml` | Composite action: install pi, resolve base, run review. |
 | `scripts/review.sh` | Orchestrator: models.json, guardrail, sequential reviewers, summarizer, post. |
 | `scripts/diff-size.sh` | Changed-line count for the guardrail. |
-| `scripts/post-comment.sh` | Find-or-update sticky PR comment. |
+| `scripts/post-comment.sh` | Post PR comment, tagging it with the reviewed head sha. |
 | `scripts/smoke.sh` | Local pre-flight check against Workers AI. |
 | `config/models.json.tmpl` | pi provider config for the two Workers AI models. |
 | `skills/review-standards/` · `skills/review-spec/` | Single-axis review skills. |
