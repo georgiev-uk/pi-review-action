@@ -32,6 +32,7 @@ REVIEW_TOOLS="bash,read,grep,find,ls"   # read-only-ish; no edit/write
 HEAD_SHA="${HEAD_SHA:-$(git rev-parse HEAD)}"
 export REVIEWED_SHA="$HEAD_SHA"   # embedded in the posted comment's marker
 
+RUN_START=$SECONDS
 WORK="$(mktemp -d)"
 trap 'rm -rf "$WORK"' EXIT
 
@@ -146,7 +147,8 @@ run_axis() {  # $1 = skill dir name, $2 = output file
        > "$out" 2> "${out}.log" || rc=$?
     if [[ "$rc" == "0" && -s "$out" ]]; then break; fi
     if (( attempt < 3 )); then
-      local backoff=$(( attempt * 20 ))
+      # Jitter the backoff so two axes retrying at once don't re-collide.
+      local backoff=$(( attempt * 20 + RANDOM % 10 ))
       echo "::warning::reviewer '$skill' attempt $attempt failed (rc=$rc); retrying in ${backoff}s"
       sleep "$backoff"
     fi
@@ -155,11 +157,19 @@ run_axis() {  # $1 = skill dir name, $2 = output file
   return 0
 }
 
-# Sequential, not parallel: two concurrent Kimi K2.7 tool loops burst past Workers
-# AI's request-rate limit (observed 429s). Running one axis at a time keeps the
-# request rate under the cap. The axes stay fully isolated — separate pi runs.
-run_axis review-standards "$WORK/standards.md"
-run_axis review-spec "$WORK/spec.md"
+# Parallel: the two axes are fully isolated (separate pi runs), so run them
+# concurrently to roughly halve stage-1 wall time. A short stagger + jittered
+# retry backoff keep the two Kimi K2.7 loops from bursting Workers AI's
+# request-rate limit in lockstep (observed 429s when started simultaneously);
+# the per-axis retry-on-429 absorbs any that still slip through.
+STAGE1_START=$SECONDS
+run_axis review-standards "$WORK/standards.md" &
+PID_STANDARDS=$!
+sleep 3   # stagger so the two loops don't hit the rate limiter in lockstep
+run_axis review-spec "$WORK/spec.md" &
+PID_SPEC=$!
+wait "$PID_STANDARDS" "$PID_SPEC"
+echo "::notice::stage 1 (both axes, parallel) took $((SECONDS - STAGE1_START))s"
 
 # Surface each reviewer's exit code + stderr so CI failures are diagnosable.
 for axis in standards spec; do
@@ -178,12 +188,14 @@ echo "::group::standards.md"; cat "$WORK/standards.md"; echo "::endgroup::"
 echo "::group::spec.md";      cat "$WORK/spec.md";      echo "::endgroup::"
 
 # --- stage 2: format-only summarizer (flash) -------------------------------
+STAGE2_START=$SECONDS
 pi -p --no-session \
    --provider cloudflare --model "$MODEL_SUMMARIZER" \
    --skill "$ACTION_PATH/skills/summarize" \
    "@$WORK/standards.md" "@$WORK/spec.md" \
    "Merge these two axis reports per the review-summarize skill. Format only." \
    > "$WORK/final.md" 2> "$WORK/final.log" || true
+echo "::notice::stage 2 (summarizer) took $((SECONDS - STAGE2_START))s"
 
 # If the summarizer failed, fall back to a deterministic concatenation.
 if [[ ! -s "$WORK/final.md" ]]; then
@@ -230,4 +242,5 @@ if [[ "$MODE" == "incremental" ]]; then
   } > "$WORK/final.banner.md" && mv "$WORK/final.banner.md" "$WORK/final.md"
 fi
 
+echo "::notice::review total (script) took $((SECONDS - RUN_START))s"
 post_and_exit "$WORK/final.md" 0

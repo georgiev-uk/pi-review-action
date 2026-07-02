@@ -45,9 +45,28 @@ runs:
       with:
         node-version: "24"   # pi requires node >=22.19.0; runners default to 24
 
+    # Cache the global install so a cold `npm install -g pi` (~30-60s) only
+    # happens when the pinned version changes. Keyed on pi_version so a bump
+    # busts the cache automatically.
+    - name: Cache pi install
+      id: pi-cache
+      uses: actions/cache@v4
+      with:
+        path: ~/.npm-global
+        key: pi-${{ runner.os }}-node24-${{ inputs.pi_version }}
+
     - name: Install pi (pinned)
       shell: bash
-      run: npm install -g --ignore-scripts "@earendil-works/pi-coding-agent@${{ inputs.pi_version }}"
+      run: |
+        # Use a custom global prefix so it lands in the cached path, and put it
+        # on PATH for later steps.
+        npm config set prefix "$HOME/.npm-global"
+        echo "$HOME/.npm-global/bin" >> "$GITHUB_PATH"
+        if [[ -x "$HOME/.npm-global/bin/pi" ]]; then
+          echo "pi restored from cache: $("$HOME/.npm-global/bin/pi" --version 2>/dev/null)"
+        else
+          npm install -g --ignore-scripts "@earendil-works/pi-coding-agent@${{ inputs.pi_version }}"
+        fi
 
     - name: Resolve diff base
       id: base
