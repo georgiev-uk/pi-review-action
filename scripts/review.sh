@@ -23,8 +23,8 @@ export GH_TOKEN="${GH_TOKEN:-${GITHUB_TOKEN:-}}"
 
 MAX_DIFF_LINES="${MAX_DIFF_LINES:-20000}"
 MODEL_REVIEWER="${MODEL_REVIEWER:-@cf/moonshotai/kimi-k2.7-code}"
-MODEL_SUMMARIZER="${MODEL_SUMMARIZER:-@cf/google/gemma-4-26b-a4b-it}"
-REVIEW_TOOLS="bash,read,grep,find,ls"   # read-only-ish; no edit/write
+MODEL_SUMMARIZER="${MODEL_SUMMARIZER:-@cf/google/gemma-4-26b-a4b-it}"   # unused: the reviewer writes the final comment directly
+REVIEW_TOOLS="read"   # capped escape hatch only — context is inlined; no bash/find/grep exploration
 
 # The head sha this run reviews. Prefer the PR head sha (stable across runs and
 # an ancestor of future heads) over `git rev-parse HEAD` (the merge ref, which
@@ -51,7 +51,7 @@ envsubst '${CLOUDFLARE_ACCOUNT_ID}' \
   > "$HOME/.pi/agent/models.json"
 
 # Log the toolchain for traceability (no secrets — token is never printed).
-echo "pi $(pi --version 2>/dev/null) · reviewer=${MODEL_REVIEWER} · summarizer=${MODEL_SUMMARIZER}"
+echo "pi $(pi --version 2>/dev/null) · reviewer=${MODEL_REVIEWER} (thinking=low, tools=${REVIEW_TOOLS})"
 
 # --- resolve / fetch the base ----------------------------------------------
 if ! git rev-parse --verify "${REVIEW_BASE}^{commit}" >/dev/null 2>&1; then
@@ -125,8 +125,62 @@ EOF
   post_and_exit "$WORK/skip.md" 0
 fi
 
-# --- stage 1: two single-axis reviewers, sequential ------------------------
-export REVIEW_BASE   # visible to the skills' bash tool calls (git diff "$REVIEW_BASE...HEAD")
+# --- precompute the review context -----------------------------------------
+# Previously each reviewer fetched its own context through 20+ agentic tool
+# calls (git diff, find, read×13…), and every turn re-sent a reasoning-bloated
+# transcript — 400k+ input tokens to review an 80-line diff, ~$1 and ~10 min.
+# Compute the context ONCE in shell and inline it, so each axis is essentially a
+# single model turn: input collapses to ~diff+files (10-15k tokens).
+CTX="$WORK/context"
+mkdir -p "$CTX"
+
+# Shared: the diff and the commit log.
+git diff "$REVIEW_BASE...HEAD" > "$CTX/diff.patch" 2>/dev/null || true
+git log  "$REVIEW_BASE..HEAD" --oneline > "$CTX/commits.txt" 2>/dev/null || true
+
+# Full contents of the changed (non-deleted) files, so the reviewer sees the
+# code around each hunk without reading the repo. Bounded: very large files are
+# omitted (the diff hunks still carry the actual change).
+: > "$CTX/changed-files.md"
+while IFS= read -r f; do
+  [[ -f "$f" ]] || continue                       # skip deletes / renamed-away
+  lines=$(wc -l < "$f" 2>/dev/null || echo 0)
+  if (( lines > 800 )); then
+    printf '### %s\n\n_(%s lines — omitted to bound input; see the diff hunks)_\n\n' "$f" "$lines" >> "$CTX/changed-files.md"
+  else
+    { printf '### %s\n\n```\n' "$f"; cat "$f"; printf '\n```\n\n'; } >> "$CTX/changed-files.md"
+  fi
+done < <(git diff --name-only --diff-filter=d "$REVIEW_BASE...HEAD" 2>/dev/null || true)
+[[ -s "$CTX/changed-files.md" ]] || printf '_No file contents available._\n' > "$CTX/changed-files.md"
+
+# Standards axis: the repo's own standards docs.
+: > "$CTX/standards-sources.md"
+for s in CLAUDE.md AGENTS.md CONTRIBUTING.md CODING_STANDARDS.md CONVENTIONS.md .editorconfig; do
+  [[ -f "$s" ]] || continue
+  { printf '### %s\n\n```\n' "$s"; cat "$s"; printf '\n```\n\n'; } >> "$CTX/standards-sources.md"
+done
+[[ -s "$CTX/standards-sources.md" ]] || printf '_No standards docs found in the repo root — review against widely-accepted conventions for the languages in the diff._\n' > "$CTX/standards-sources.md"
+
+# Spec axis: the PR body plus any issues referenced from commits / PR body.
+: > "$CTX/spec-sources.md"
+if [[ -n "${GH_TOKEN:-}" && -n "${GITHUB_REPOSITORY:-}" ]]; then
+  if [[ -n "${PR_NUMBER:-}" ]]; then
+    { echo "### Pull request #${PR_NUMBER}"; echo;
+      gh pr view "$PR_NUMBER" --json title,body \
+        --jq '"**" + .title + "**\n\n" + (.body // "_(no description)_")' 2>/dev/null; echo; } >> "$CTX/spec-sources.md" || true
+  fi
+  refs="$( { git log "$REVIEW_BASE..HEAD" --format=%B 2>/dev/null; cat "$CTX/spec-sources.md"; } \
+             | grep -oiE '#[0-9]+' | tr -d '#' | sort -un || true)"
+  for n in $refs; do
+    { echo "### Issue #${n}"; echo;
+      gh issue view "$n" --json title,body \
+        --jq '"**" + .title + "**\n\n" + (.body // "_(no body)_")' 2>/dev/null; echo; } >> "$CTX/spec-sources.md" || true
+  done
+fi
+[[ -s "$CTX/spec-sources.md" ]] || printf '_No spec source (issue / PRD / PR body) found — if nothing is found, skip the spec axis._\n' > "$CTX/spec-sources.md"
+
+# --- stage 1: two single-axis reviewers, parallel --------------------------
+export REVIEW_BASE   # still exported for the read-tool escape hatch's context
 
 # Incremental context: attach the prior review and tell the reviewer that the
 # diff now contains ONLY the new commits since that review.
@@ -137,112 +191,74 @@ if [[ "$MODE" == "incremental" && -n "$PRIOR_REVIEW" ]]; then
   PRIOR_ARGS=("@$PRIOR_REVIEW")
 fi
 
-# One reviewer pass, with retry-on-failure. pi against Workers AI can return
-# 429 (rate limit) under load; back off and retry rather than fail the axis.
-# rc is captured with `|| rc=$?` so `set -e` doesn't abort before we record it.
-run_axis() {  # $1 = skill dir name, $2 = output file
-  local skill="$1" out="$2" rc=0 attempt start
-  start=$SECONDS
-  for attempt in 1 2 3; do
-    rc=0
-    # --mode json emits the full event stream (turns, tool calls, token usage)
-    # as JSONL — instrumentation we mine below. The final Markdown report is
-    # extracted from the last assistant message; same run, no extra model cost.
-    pi --mode json -a --no-session \
-       --provider cloudflare --model "$MODEL_REVIEWER" \
-       --tools "$REVIEW_TOOLS" \
-       --skill "$ACTION_PATH/skills/$skill" \
-       ${PRIOR_ARGS[@]+"${PRIOR_ARGS[@]}"} \
-       "REVIEW_BASE=$REVIEW_BASE . ${INCR_NOTE} Run the ${skill} review now and print only your Markdown section." \
-       > "${out}.jsonl" 2> "${out}.log" || rc=$?
-    if [[ "$rc" == "0" && -s "${out}.jsonl" ]]; then
-      jq -rn '[inputs] | map(select(.type=="message_end" and .message.role=="assistant")) | last | (.message.content // [] | map(select(.type=="text") | .text) | join(""))' \
-        < "${out}.jsonl" > "$out" 2>/dev/null || true
-    fi
-    # Success only if extraction produced real (non-whitespace) Markdown — an
-    # empty jq result still writes a lone newline, which -s would misread.
-    if [[ "$rc" == "0" ]] && grep -q '[^[:space:]]' "$out" 2>/dev/null; then break; fi
-    if (( attempt < 3 )); then
-      # Jitter the backoff so two axes retrying at once don't re-collide.
-      local backoff=$(( attempt * 20 + RANDOM % 10 ))
-      echo "::warning::reviewer '$skill' attempt $attempt failed (rc=$rc); retrying in ${backoff}s"
-      sleep "$backoff"
-    fi
-  done
-  # Normalize a whitespace-only extraction to truly empty so the -s fallbacks
-  # downstream fire correctly.
-  grep -q '[^[:space:]]' "$out" 2>/dev/null || : > "$out"
-  echo "$rc" > "${out}.rc"
-  # Mine the event stream for where the wall-time actually went.
-  local stats=""
-  [[ -s "${out}.jsonl" ]] && stats="$(jq -rn -f "$ACTION_PATH/scripts/pi-stats.jq" < "${out}.jsonl" 2>/dev/null || true)"
-  echo "::notice::axis '$skill' took $((SECONDS - start))s · ${stats:-no stats}"
-  return 0
-}
-
-# Parallel: the two axes are fully isolated (separate pi runs), so run them
-# concurrently to roughly halve stage-1 wall time. A short stagger + jittered
-# retry backoff keep the two Kimi K2.7 loops from bursting Workers AI's
-# request-rate limit in lockstep (observed 429s when started simultaneously);
-# the per-axis retry-on-429 absorbs any that still slip through.
-STAGE1_START=$SECONDS
-run_axis review-standards "$WORK/standards.md" &
-PID_STANDARDS=$!
-sleep 3   # stagger so the two loops don't hit the rate limiter in lockstep
-run_axis review-spec "$WORK/spec.md" &
-PID_SPEC=$!
-wait "$PID_STANDARDS" "$PID_SPEC"
-echo "::notice::stage 1 (both axes, parallel) took $((SECONDS - STAGE1_START))s"
-
-# Surface each reviewer's exit code + stderr so CI failures are diagnosable.
-for axis in standards spec; do
-  rc="$(cat "$WORK/${axis}.md.rc" 2>/dev/null || echo '?')"
-  if [[ "$rc" != "0" ]]; then
-    echo "::warning::reviewer '$axis' exited with rc=$rc"
-    echo "::group::${axis} stderr (pi)"; cat "$WORK/${axis}.md.log" 2>/dev/null; echo "::endgroup::"
+# One Kimi call does BOTH axes (standards + spec) AND writes the final comment
+# directly — no second reviewer, no separate summarizer. All context is inlined
+# (diff, commits, changed files, standards docs, spec sources), so it runs in
+# ~one turn. `read` is the only tool: a capped escape hatch for the rare
+# cross-file lookup, with no bash/find/grep to drive repo-wide wandering.
+# --mode json gives the event stream we mine for stats; the report is extracted
+# from the last assistant message. rc is captured with `|| rc=$?` so `set -e`
+# doesn't abort before we record it.
+REVIEW_START=$SECONDS
+out="$WORK/final.md"
+rc=0
+for attempt in 1 2 3; do
+  rc=0
+  pi --mode json -a --no-session \
+     --provider cloudflare --model "$MODEL_REVIEWER" \
+     --thinking low \
+     --tools "$REVIEW_TOOLS" \
+     --skill "$ACTION_PATH/skills/review" \
+     "@$CTX/diff.patch" "@$CTX/commits.txt" "@$CTX/changed-files.md" \
+     "@$CTX/standards-sources.md" "@$CTX/spec-sources.md" \
+     ${PRIOR_ARGS[@]+"${PRIOR_ARGS[@]}"} \
+     "All context is attached inline: the diff, commit log, full changed files, the repo's standards docs, and the spec sources. Everything you need is here — do NOT explore the repo (read is capped: at most 3 reads, only for a specific unchanged file you must see). Review BOTH axes and print ONLY the final Markdown comment per the review skill. ${INCR_NOTE}" \
+     > "${out}.jsonl" 2> "${out}.log" || rc=$?
+  if [[ "$rc" == "0" && -s "${out}.jsonl" ]]; then
+    jq -rn '[inputs] | map(select(.type=="message_end" and .message.role=="assistant")) | last | (.message.content // [] | map(select(.type=="text") | .text) | join(""))' \
+      < "${out}.jsonl" > "$out" 2>/dev/null || true
+  fi
+  # Success only if extraction produced real (non-whitespace) Markdown — an
+  # empty jq result still writes a lone newline, which -s would misread.
+  if [[ "$rc" == "0" ]] && grep -q '[^[:space:]]' "$out" 2>/dev/null; then break; fi
+  if (( attempt < 3 )); then
+    backoff=$(( attempt * 20 + RANDOM % 10 ))
+    echo "::warning::review attempt $attempt failed (rc=$rc); retrying in ${backoff}s"
+    sleep "$backoff"
   fi
 done
+grep -q '[^[:space:]]' "$out" 2>/dev/null || : > "$out"
 
-# Fallbacks so the summarizer always has both sections.
-[[ -s "$WORK/standards.md" ]] || printf '## Standards\n\n_Reviewer produced no output._\n' > "$WORK/standards.md"
-[[ -s "$WORK/spec.md" ]]      || printf '## Spec\n\n_Reviewer produced no output._\n'      > "$WORK/spec.md"
+# Instrumentation: where the wall-time / tokens actually went.
+STATS=""
+[[ -s "${out}.jsonl" ]] && STATS="$(jq -rn -f "$ACTION_PATH/scripts/pi-stats.jq" < "${out}.jsonl" 2>/dev/null || true)"
+echo "::notice::review took $((SECONDS - REVIEW_START))s · ${STATS:-no stats}"
 
-echo "::group::standards.md"; cat "$WORK/standards.md"; echo "::endgroup::"
-echo "::group::spec.md";      cat "$WORK/spec.md";      echo "::endgroup::"
-
-# --- stage 2: format-only summarizer (flash) -------------------------------
-STAGE2_START=$SECONDS
-pi -p --no-session \
-   --provider cloudflare --model "$MODEL_SUMMARIZER" \
-   --skill "$ACTION_PATH/skills/summarize" \
-   "@$WORK/standards.md" "@$WORK/spec.md" \
-   "Merge these two axis reports per the review-summarize skill. Format only." \
-   > "$WORK/final.md" 2> "$WORK/final.log" || true
-echo "::notice::stage 2 (summarizer) took $((SECONDS - STAGE2_START))s"
-
-# If the summarizer failed, fall back to a deterministic concatenation.
-if [[ ! -s "$WORK/final.md" ]]; then
-  echo "::warning::summarizer produced no output; using deterministic merge"
-  echo "::group::summarizer stderr (pi)"; cat "$WORK/final.log" 2>/dev/null; echo "::endgroup::"
-  {
-    echo "## 🤖 Code review (Kimi K2.7 · pi)"
-    echo
-    echo "_Summarizer unavailable — raw axis reports below._"
-    echo
-    cat "$WORK/standards.md"
-    echo
-    cat "$WORK/spec.md"
-    echo
-    echo "---"
-    echo "<sub>Two-axis review via the pi harness on Cloudflare Workers AI. Advisory only.</sub>"
-  } > "$WORK/final.md"
+if [[ "$rc" != "0" ]]; then
+  echo "::warning::reviewer exited with rc=$rc"
+  echo "::group::reviewer stderr (pi)"; cat "${out}.log" 2>/dev/null; echo "::endgroup::"
 fi
 
-# The summarizer (flash) sometimes wraps its whole reply in a ``` code fence,
+# Fallback comment if the model produced nothing usable after retries.
+if ! grep -q '[^[:space:]]' "$out" 2>/dev/null; then
+  echo "::warning::reviewer produced no output; posting a failure notice"
+  {
+    echo "## 🤖 Code review"
+    echo
+    echo "_Review unavailable — the model returned no output after retries. See the action logs._"
+    echo
+    echo "---"
+    echo "<sub>Two-axis review (Standards + Spec) via the pi harness on Cloudflare Workers AI. Advisory only.</sub>"
+  } > "$out"
+fi
+
+echo "::group::final.md"; cat "$out"; echo "::endgroup::"
+
+# Kimi sometimes wraps its whole reply in a ``` code fence,
 # which would render the entire comment as one code block on GitHub. If the
 # body is fenced top-and-bottom, unwrap it.
 if [[ "$(head -1 "$WORK/final.md")" == '```'* ]] && [[ "$(grep -c '^```' "$WORK/final.md")" -ge 2 ]]; then
-  echo "::warning::summarizer wrapped output in a code fence; unwrapping"
+  echo "::warning::reviewer wrapped output in a code fence; unwrapping"
   awk '
     NR==1 && /^```/ { next }            # drop leading fence
     { lines[++n] = $0 }
