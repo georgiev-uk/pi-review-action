@@ -24,14 +24,14 @@ the GitHub Actions layer:
 
 - `review-standards` and `review-spec` are **single-axis** skills, each run as its own
   pi process by `scripts/review.sh`. They run **sequentially** (one axis at a time) to
-  stay under Workers AI's per-model request-rate limit — two concurrent GLM-5.2 tool
+  stay under Workers AI's per-model request-rate limit — two concurrent Kimi K2.7 tool
   loops trip a 429. Isolation is preserved either way (separate processes).
 - Each is **non-interactive**: it never asks the user; the fixed point arrives via the
   `REVIEW_BASE` env var instead of a prompt.
 - Issue lookup uses `gh` (authenticated by `GITHUB_TOKEN`) instead of a project-specific
   `docs/agents/issue-tracker.md` workflow.
 - A third skill, `summarize`, does a **format-only** merge with a TL;DR (the upstream
-  "Aggregate" step), running on the cheaper `glm-4.7-flash`.
+  "Aggregate" step), running on the cheaper `gemma-4-26b-a4b-it`.
 
 ## How to re-sync
 

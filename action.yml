@@ -1,5 +1,5 @@
-name: "pi GLM code review"
-description: "Two-axis (Standards + Spec) PR review via the pi harness on Cloudflare Workers AI GLM 5.2. Advisory."
+name: "pi Kimi code review"
+description: "Two-axis (Standards + Spec) PR review via the pi harness on Cloudflare Workers AI Kimi K2.7. Advisory."
 author: "Martin Georgiev"
 branding:
   icon: "check-circle"
@@ -27,11 +27,11 @@ inputs:
   model_reviewer:
     description: "Workers AI model id for the two axis reviewers."
     required: false
-    default: "@cf/zai-org/glm-5.2"
+    default: "@cf/moonshotai/kimi-k2.7-code"
   model_summarizer:
     description: "Workers AI model id for the format-only summarizer."
     required: false
-    default: "@cf/zai-org/glm-4.7-flash"
+    default: "@cf/google/gemma-4-26b-a4b-it"
   github_token:
     description: "Token used to read issues and post the PR comment."
     required: false

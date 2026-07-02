@@ -25,7 +25,7 @@ Either may say it found nothing or was skipped — preserve that as-is.
 Print **exactly** this structure and nothing else:
 
 ```
-## 🤖 Code review (GLM 5.2 · pi)
+## 🤖 Code review (Kimi K2.7 · pi)
 
 **TL;DR:** <2–4 sentences. State the count of findings per axis and the single worst issue *within each axis* as the reports state it. Do not pick an overall winner.>
 

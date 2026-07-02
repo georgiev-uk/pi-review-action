@@ -9,8 +9,8 @@
 # Optional env:
 #   MAX_DIFF_LINES       default 20000
 #   PR_NUMBER            enables sticky PR comment
-#   MODEL_REVIEWER       default @cf/zai-org/glm-5.2
-#   MODEL_SUMMARIZER     default @cf/zai-org/glm-4.7-flash
+#   MODEL_REVIEWER       default @cf/moonshotai/kimi-k2.7-code
+#   MODEL_SUMMARIZER     default @cf/google/gemma-4-26b-a4b-it
 #   GITHUB_STEP_SUMMARY  written to if set
 set -euo pipefail
 
@@ -21,8 +21,8 @@ set -euo pipefail
 export GH_TOKEN="${GH_TOKEN:-${GITHUB_TOKEN:-}}"
 
 MAX_DIFF_LINES="${MAX_DIFF_LINES:-20000}"
-MODEL_REVIEWER="${MODEL_REVIEWER:-@cf/zai-org/glm-5.2}"
-MODEL_SUMMARIZER="${MODEL_SUMMARIZER:-@cf/zai-org/glm-4.7-flash}"
+MODEL_REVIEWER="${MODEL_REVIEWER:-@cf/moonshotai/kimi-k2.7-code}"
+MODEL_SUMMARIZER="${MODEL_SUMMARIZER:-@cf/google/gemma-4-26b-a4b-it}"
 REVIEW_TOOLS="bash,read,grep,find,ls"   # read-only-ish; no edit/write
 
 WORK="$(mktemp -d)"
@@ -92,7 +92,7 @@ run_axis() {  # $1 = skill dir name, $2 = output file
   return 0
 }
 
-# Sequential, not parallel: two concurrent GLM-5.2 tool loops burst past Workers
+# Sequential, not parallel: two concurrent Kimi K2.7 tool loops burst past Workers
 # AI's request-rate limit (observed 429s). Running one axis at a time keeps the
 # request rate under the cap. The axes stay fully isolated — separate pi runs.
 run_axis review-standards "$WORK/standards.md"
@@ -127,7 +127,7 @@ if [[ ! -s "$WORK/final.md" ]]; then
   echo "::warning::summarizer produced no output; using deterministic merge"
   echo "::group::summarizer stderr (pi)"; cat "$WORK/final.log" 2>/dev/null; echo "::endgroup::"
   {
-    echo "## 🤖 Code review (GLM 5.2 · pi)"
+    echo "## 🤖 Code review (Kimi K2.7 · pi)"
     echo
     echo "_Summarizer unavailable — raw axis reports below._"
     echo
