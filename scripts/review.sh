@@ -36,6 +36,12 @@ RUN_START=$SECONDS
 WORK="$(mktemp -d)"
 trap 'rm -rf "$WORK"' EXIT
 
+# Skip pi.dev version/update checks on every pi invocation (2 reviewers +
+# summarizer = 3 per review). Pure startup latency; the Workers AI model calls
+# are unaffected.
+export PI_OFFLINE=1
+export PI_SKIP_VERSION_CHECK=1
+
 # --- pi provider config ----------------------------------------------------
 # envsubst ONLY the account id; leave $CLOUDFLARE_API_TOKEN for pi to resolve
 # at request time (so the token never lands on disk).
@@ -135,17 +141,27 @@ fi
 # 429 (rate limit) under load; back off and retry rather than fail the axis.
 # rc is captured with `|| rc=$?` so `set -e` doesn't abort before we record it.
 run_axis() {  # $1 = skill dir name, $2 = output file
-  local skill="$1" out="$2" rc=0 attempt
+  local skill="$1" out="$2" rc=0 attempt start
+  start=$SECONDS
   for attempt in 1 2 3; do
     rc=0
-    pi -p -a --no-session \
+    # --mode json emits the full event stream (turns, tool calls, token usage)
+    # as JSONL — instrumentation we mine below. The final Markdown report is
+    # extracted from the last assistant message; same run, no extra model cost.
+    pi --mode json -a --no-session \
        --provider cloudflare --model "$MODEL_REVIEWER" \
        --tools "$REVIEW_TOOLS" \
        --skill "$ACTION_PATH/skills/$skill" \
        ${PRIOR_ARGS[@]+"${PRIOR_ARGS[@]}"} \
        "REVIEW_BASE=$REVIEW_BASE . ${INCR_NOTE} Run the ${skill} review now and print only your Markdown section." \
-       > "$out" 2> "${out}.log" || rc=$?
-    if [[ "$rc" == "0" && -s "$out" ]]; then break; fi
+       > "${out}.jsonl" 2> "${out}.log" || rc=$?
+    if [[ "$rc" == "0" && -s "${out}.jsonl" ]]; then
+      jq -rn '[inputs] | map(select(.type=="message_end" and .message.role=="assistant")) | last | (.message.content // [] | map(select(.type=="text") | .text) | join(""))' \
+        < "${out}.jsonl" > "$out" 2>/dev/null || true
+    fi
+    # Success only if extraction produced real (non-whitespace) Markdown — an
+    # empty jq result still writes a lone newline, which -s would misread.
+    if [[ "$rc" == "0" ]] && grep -q '[^[:space:]]' "$out" 2>/dev/null; then break; fi
     if (( attempt < 3 )); then
       # Jitter the backoff so two axes retrying at once don't re-collide.
       local backoff=$(( attempt * 20 + RANDOM % 10 ))
@@ -153,7 +169,14 @@ run_axis() {  # $1 = skill dir name, $2 = output file
       sleep "$backoff"
     fi
   done
+  # Normalize a whitespace-only extraction to truly empty so the -s fallbacks
+  # downstream fire correctly.
+  grep -q '[^[:space:]]' "$out" 2>/dev/null || : > "$out"
   echo "$rc" > "${out}.rc"
+  # Mine the event stream for where the wall-time actually went.
+  local stats=""
+  [[ -s "${out}.jsonl" ]] && stats="$(jq -rn -f "$ACTION_PATH/scripts/pi-stats.jq" < "${out}.jsonl" 2>/dev/null || true)"
+  echo "::notice::axis '$skill' took $((SECONDS - start))s · ${stats:-no stats}"
   return 0
 }
 
