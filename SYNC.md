@@ -1,6 +1,7 @@
 # Upstream sync — review skill
 
-The skills in `skills/review-standards/` and `skills/review-spec/` are **adapted** from
+The skills in `skills/review/` (the one CI runs), `skills/review-standards/` and
+`skills/review-spec/` are **adapted** from
 Matt Pocock's `review` skill. The unmodified upstream copy is vendored at
 `skills/_upstream/review.SKILL.md` for diffing.
 
@@ -8,9 +9,9 @@ Matt Pocock's `review` skill. The unmodified upstream copy is vendored at
 |---|---|
 | Upstream | https://github.com/mattpocock/skills/blob/main/skills/in-progress/review/SKILL.md |
 | Raw | https://raw.githubusercontent.com/mattpocock/skills/main/skills/in-progress/review/SKILL.md |
-| Vendored at commit | `df129fcfce610712a737fe4bb9362e621f0752c5` |
-| Commit date | 2026-06-17 |
-| Pulled | 2026-06-25 |
+| Vendored at commit | unrecorded — copy supplied by hand, not fetched |
+| Commit date | unknown |
+| Pulled | 2026-08-03 (upstream skill renamed `review` → `code-review`; added the Fowler smell baseline) |
 
 > Note: upstream lives under `skills/in-progress/` — it is explicitly unstable and may
 > change or move. Re-pull deliberately, don't auto-fetch in CI.
@@ -37,5 +38,7 @@ the GitHub Actions layer:
 
 1. Pull the latest upstream raw file; overwrite `skills/_upstream/review.SKILL.md`.
 2. `git diff` it against the previous vendored version to see what changed.
-3. Port any meaningful changes into the two single-axis skills + `summarize`.
+3. Port any meaningful changes into `review` (live), the two single-axis skills + `summarize`.
+   The smell baseline is duplicated verbatim into `review` and `review-standards` — each pi
+   process gets one SKILL.md and cannot read the others.
 4. Update the commit SHA / dates in the table above.
