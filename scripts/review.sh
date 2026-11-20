@@ -31,6 +31,11 @@ REVIEW_TOOLS="read"   # capped escape hatch only — context is inlined; no bash
 # changes every run and can't be diffed-from next time).
 HEAD_SHA="${HEAD_SHA:-$(git rev-parse HEAD)}"
 export REVIEWED_SHA="$HEAD_SHA"   # embedded in the posted comment's marker
+# Diff against HEAD_SHA, never the merge ref: the merge ref folds in whatever
+# landed on the base branch since the branch point, which leaks base-branch
+# commits into an incremental (PRIOR_SHA...merge) diff.
+git rev-parse --verify "${HEAD_SHA}^{commit}" >/dev/null 2>&1 \
+  || git fetch --no-tags --depth=200 origin "$HEAD_SHA" >/dev/null 2>&1 || true
 
 RUN_START=$SECONDS
 WORK="$(mktemp -d)"
@@ -96,7 +101,7 @@ if [[ -n "${PR_NUMBER:-}" && -n "${GITHUB_REPOSITORY:-}" ]]; then
       || git fetch --no-tags --depth=200 origin "$PRIOR_SHA" >/dev/null 2>&1 || true
 
     if git rev-parse --verify "${PRIOR_SHA}^{commit}" >/dev/null 2>&1 \
-       && git merge-base --is-ancestor "$PRIOR_SHA" HEAD 2>/dev/null; then
+       && git merge-base --is-ancestor "$PRIOR_SHA" "$HEAD_SHA" 2>/dev/null; then
       MODE="incremental"
       REVIEW_BASE="$PRIOR_SHA"           # reviewers now diff only the new commits
       PRIOR_REVIEW="$WORK/prior.md"
@@ -114,7 +119,7 @@ post_and_exit() {  # $1 = body file, $2 = exit code
 }
 
 # --- guardrail -------------------------------------------------------------
-SIZE="$(bash "$ACTION_PATH/scripts/diff-size.sh" "$REVIEW_BASE")"
+SIZE="$(bash "$ACTION_PATH/scripts/diff-size.sh" "$REVIEW_BASE" "$HEAD_SHA")"
 echo "diff size: ${SIZE} changed lines (limit ${MAX_DIFF_LINES})"
 if (( SIZE > MAX_DIFF_LINES )); then
   cat > "$WORK/skip.md" <<EOF
@@ -135,8 +140,8 @@ CTX="$WORK/context"
 mkdir -p "$CTX"
 
 # Shared: the diff and the commit log.
-git diff "$REVIEW_BASE...HEAD" > "$CTX/diff.patch" 2>/dev/null || true
-git log  "$REVIEW_BASE..HEAD" --oneline > "$CTX/commits.txt" 2>/dev/null || true
+git diff "$REVIEW_BASE...$HEAD_SHA" > "$CTX/diff.patch" 2>/dev/null || true
+git log  "$REVIEW_BASE..$HEAD_SHA" --oneline > "$CTX/commits.txt" 2>/dev/null || true
 
 # Full contents of the modified files, so the reviewer sees the
 # code around each hunk without reading the repo. Bounded: very large files are
@@ -151,7 +156,7 @@ while IFS= read -r f; do
   else
     { printf '### %s\n\n```\n' "$f"; cat "$f"; printf '\n```\n\n'; } >> "$CTX/changed-files.md"
   fi
-done < <(git diff --name-only --diff-filter=da "$REVIEW_BASE...HEAD" 2>/dev/null || true)
+done < <(git diff --name-only --diff-filter=da "$REVIEW_BASE...$HEAD_SHA" 2>/dev/null || true)
 [[ -s "$CTX/changed-files.md" ]] || printf '_No file contents available._\n' > "$CTX/changed-files.md"
 
 # Standards axis: the repo's own standards docs.
@@ -170,7 +175,7 @@ if [[ -n "${GH_TOKEN:-}" && -n "${GITHUB_REPOSITORY:-}" ]]; then
       gh pr view "$PR_NUMBER" --json title,body \
         --jq '"**" + .title + "**\n\n" + (.body // "_(no description)_")' 2>/dev/null; echo; } >> "$CTX/spec-sources.md" || true
   fi
-  refs="$( { git log "$REVIEW_BASE..HEAD" --format=%B 2>/dev/null; cat "$CTX/spec-sources.md"; } \
+  refs="$( { git log "$REVIEW_BASE..$HEAD_SHA" --format=%B 2>/dev/null; cat "$CTX/spec-sources.md"; } \
              | grep -oiE '#[0-9]+' | tr -d '#' | sort -un || true)"
   for n in $refs; do
     { echo "### Issue #${n}"; echo;
