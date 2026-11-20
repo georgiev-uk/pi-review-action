@@ -25,7 +25,7 @@ the GitHub Actions layer:
 
 - `review-standards` and `review-spec` are **single-axis** skills, each run as its own
   pi process by `scripts/review.sh`. They run **sequentially** (one axis at a time) to
-  stay under Workers AI's per-model request-rate limit — two concurrent Kimi K2.7 tool
+  stay under Workers AI's per-model request-rate limit — two concurrent Kimi tool
   loops trip a 429. Isolation is preserved either way (separate processes).
 - Each is **non-interactive**: it never asks the user; the fixed point arrives via the
   `REVIEW_BASE` env var instead of a prompt.

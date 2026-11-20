@@ -52,7 +52,7 @@ Keep the two axes separate — do not cross-rank them against each other. Aim fo
 Print **exactly** this structure and nothing else (no surrounding code fence):
 
 ```
-## 🤖 Code review (Kimi K2.7 · pi)
+## 🤖 Code review (Kimi · pi)
 
 **TL;DR:** <2–4 sentences: the count of findings per axis and the single worst issue within each axis. Do not pick an overall winner.>
 

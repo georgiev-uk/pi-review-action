@@ -2,7 +2,7 @@
 
 A GitHub Action that runs a **two-axis code review** on pull requests using the
 [pi](https://pi.dev) agent harness against **Cloudflare Workers AI** — reviewing with
-`@cf/moonshotai/kimi-k2.7-code` and summarizing with `@cf/google/gemma-4-26b-a4b-it`. Inference runs
+`moonshotai/kimi-k3.1-pro` and summarizing with `@cf/google/gemma-4-26b-a4b-it`. Inference runs
 on Cloudflare GPUs; prompts and code never go to Moonshot AI or Google.
 
 The review follows two independent axes (adapted from
@@ -27,7 +27,7 @@ pull_request ─► resolve base ─► [diff ≤ max_diff_lines?] ──no─�
                                         │ yes
                 ┌───────────────────────┴───────────────────────┐   (sequential)
    pi: review-standards skill                       pi: review-spec skill
-   model @cf/moonshotai/kimi-k2.7-code               model @cf/moonshotai/kimi-k2.7-code
+   model moonshotai/kimi-k3.1-pro                    model moonshotai/kimi-k3.1-pro
    (own git diff + file/issue lookup via bash/gh)
                 └───────────────────────┬───────────────────────┘
                           pi: summarize skill (format-only + TL;DR)
@@ -39,7 +39,7 @@ pull_request ─► resolve base ─► [diff ≤ max_diff_lines?] ──no─�
 
 pi has **no sub-agents**, so the two axes run as separate pi processes, one after the
 other. They run **sequentially** (not concurrently) to stay under Workers AI's per-model
-request-rate limit — two concurrent Kimi K2.7 tool loops trip a 429. The axes stay fully
+request-rate limit — two concurrent Kimi tool loops trip a 429. The axes stay fully
 isolated regardless. See [`SYNC.md`](./SYNC.md) for how this differs from the upstream skill.
 
 ## Usage
@@ -85,8 +85,8 @@ account id is substituted into the generated `models.json`.
 | `api_token` | — (required) | Cloudflare Workers AI token. |
 | `base` | auto | Override the diff base. Defaults to the PR base branch. |
 | `max_diff_lines` | `20000` | Skip the review if the diff exceeds this many changed lines. |
-| `pi_version` | `0.80.2` | Pinned pi CLI version. |
-| `model_reviewer` | `@cf/moonshotai/kimi-k2.7-code` | Model for the two axis reviewers. |
+| `pi_version` | `1.5.2` | Pinned pi CLI version. |
+| `model_reviewer` | `moonshotai/kimi-k3.1-pro` | Model for the reviewer. Also supported: `moonshotai/kimi-k3` ($3/$15 per M vs $2/$10). `@cf/moonshotai/kimi-k2.7-code` was deprecated by Cloudflare on 2026-11-20. |
 | `model_summarizer` | `@cf/google/gemma-4-26b-a4b-it` | Model for the format-only summarizer. |
 | `github_token` | `${{ github.token }}` | Reads issues, posts the comment. |
 
@@ -100,7 +100,7 @@ export CLOUDFLARE_API_TOKEN=...     # Workers AI: Read
 bash scripts/smoke.sh
 ```
 
-It checks: raw endpoint reachability → pi registers the models → **Kimi K2.7 executes a
+It checks: raw endpoint reachability → pi registers the models → **the reviewer model executes a
 bash tool call** → Gemma completes a plain prompt.
 
 ## Layout

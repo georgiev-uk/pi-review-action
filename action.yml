@@ -1,5 +1,5 @@
 name: "pi Kimi code review"
-description: "Two-axis (Standards + Spec) PR review via the pi harness on Cloudflare Workers AI Kimi K2.7. Advisory."
+description: "Two-axis (Standards + Spec) PR review via the pi harness on Cloudflare Workers AI Kimi K3.1 Pro. Advisory."
 author: "Martin Georgiev"
 branding:
   icon: "check-circle"
@@ -23,11 +23,11 @@ inputs:
   pi_version:
     description: "Pinned @earendil-works/pi-coding-agent version."
     required: false
-    default: "0.80.2"
+    default: "1.5.2"
   model_reviewer:
     description: "Workers AI model id for the two axis reviewers."
     required: false
-    default: "@cf/moonshotai/kimi-k2.7-code"
+    default: "moonshotai/kimi-k3.1-pro"
   model_summarizer:
     description: "Workers AI model id for the format-only summarizer."
     required: false

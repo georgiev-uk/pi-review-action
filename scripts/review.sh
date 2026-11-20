@@ -10,7 +10,7 @@
 #   MAX_DIFF_LINES       default 20000
 #   PR_NUMBER            enables PR comment + incremental re-review tracking
 #   HEAD_SHA             PR head sha this run reviews (defaults to git HEAD)
-#   MODEL_REVIEWER       default @cf/moonshotai/kimi-k2.7-code
+#   MODEL_REVIEWER       default moonshotai/kimi-k3.1-pro
 #   MODEL_SUMMARIZER     default @cf/google/gemma-4-26b-a4b-it
 #   GITHUB_STEP_SUMMARY  written to if set
 set -euo pipefail
@@ -22,7 +22,7 @@ set -euo pipefail
 export GH_TOKEN="${GH_TOKEN:-${GITHUB_TOKEN:-}}"
 
 MAX_DIFF_LINES="${MAX_DIFF_LINES:-20000}"
-MODEL_REVIEWER="${MODEL_REVIEWER:-@cf/moonshotai/kimi-k2.7-code}"
+MODEL_REVIEWER="${MODEL_REVIEWER:-moonshotai/kimi-k3.1-pro}"
 MODEL_SUMMARIZER="${MODEL_SUMMARIZER:-@cf/google/gemma-4-26b-a4b-it}"   # unused: the reviewer writes the final comment directly
 REVIEW_TOOLS="read"   # capped escape hatch only — context is inlined; no bash/find/grep exploration
 
@@ -138,9 +138,10 @@ mkdir -p "$CTX"
 git diff "$REVIEW_BASE...HEAD" > "$CTX/diff.patch" 2>/dev/null || true
 git log  "$REVIEW_BASE..HEAD" --oneline > "$CTX/commits.txt" 2>/dev/null || true
 
-# Full contents of the changed (non-deleted) files, so the reviewer sees the
+# Full contents of the modified files, so the reviewer sees the
 # code around each hunk without reading the repo. Bounded: very large files are
-# omitted (the diff hunks still carry the actual change).
+# omitted (the diff hunks still carry the actual change). Added files are
+# skipped: the diff already carries them in full.
 : > "$CTX/changed-files.md"
 while IFS= read -r f; do
   [[ -f "$f" ]] || continue                       # skip deletes / renamed-away
@@ -150,7 +151,7 @@ while IFS= read -r f; do
   else
     { printf '### %s\n\n```\n' "$f"; cat "$f"; printf '\n```\n\n'; } >> "$CTX/changed-files.md"
   fi
-done < <(git diff --name-only --diff-filter=d "$REVIEW_BASE...HEAD" 2>/dev/null || true)
+done < <(git diff --name-only --diff-filter=da "$REVIEW_BASE...HEAD" 2>/dev/null || true)
 [[ -s "$CTX/changed-files.md" ]] || printf '_No file contents available._\n' > "$CTX/changed-files.md"
 
 # Standards axis: the repo's own standards docs.
@@ -221,6 +222,9 @@ for attempt in 1 2 3; do
   # Success only if extraction produced real (non-whitespace) Markdown — an
   # empty jq result still writes a lone newline, which -s would misread.
   if [[ "$rc" == "0" ]] && grep -q '[^[:space:]]' "$out" 2>/dev/null; then break; fi
+  # pi exits 0 even when the provider rejects the request; surface its error.
+  err="$(jq -rn '[inputs] | map(select(.type=="message_end" and .message.role=="assistant")) | last | select(.message.stopReason=="error" or .message.stopReason=="length") | "\(.message.stopReason): \(.message.errorMessage // "output limit hit")"' < "${out}.jsonl" 2>/dev/null || true)"
+  [[ -n "$err" ]] && echo "::warning::reviewer ${err}"
   if (( attempt < 3 )); then
     backoff=$(( attempt * 20 + RANDOM % 10 ))
     echo "::warning::review attempt $attempt failed (rc=$rc); retrying in ${backoff}s"

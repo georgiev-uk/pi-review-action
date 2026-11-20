@@ -7,13 +7,38 @@
       "authHeader": true,
       "models": [
         {
-          "id": "@cf/moonshotai/kimi-k2.7-code",
-          "name": "Kimi K2.7 Code (Workers AI)",
+          "id": "moonshotai/kimi-k3",
+          "name": "Kimi K3 (Workers AI)",
           "reasoning": true,
           "input": ["text"],
-          "contextWindow": 262144,
-          "maxTokens": 16384,
-          "cost": { "input": 1.40, "output": 4.40, "cacheRead": 0.26, "cacheWrite": 0 }
+          "contextWindow": 1048576,
+          "maxTokens": 65536,
+          "cost": { "input": 3.00, "output": 15.00, "cacheRead": 0.30, "cacheWrite": 0 },
+          "compat": {
+            "supportsDeveloperRole": false,
+            "supportsReasoningEffort": true,
+            "thinkingFormat": "openai",
+            "maxTokensField": "max_tokens",
+            "requiresReasoningContentOnAssistantMessages": true
+          },
+          "thinkingLevelMap": { "off": null, "minimal": null, "low": "low", "medium": null, "high": "high", "xhigh": null, "max": "max" }
+        },
+        {
+          "id": "moonshotai/kimi-k3.1-pro",
+          "name": "Kimi K3.1 Pro (Workers AI)",
+          "reasoning": true,
+          "input": ["text"],
+          "contextWindow": 1048576,
+          "maxTokens": 65536,
+          "cost": { "input": 2.00, "output": 10.00, "cacheRead": 0.20, "cacheWrite": 0 },
+          "compat": {
+            "supportsDeveloperRole": false,
+            "supportsReasoningEffort": true,
+            "thinkingFormat": "openai",
+            "maxTokensField": "max_tokens",
+            "requiresReasoningContentOnAssistantMessages": true
+          },
+          "thinkingLevelMap": { "off": null, "minimal": null, "low": "low", "medium": null, "high": "high", "xhigh": null, "max": "max" }
         },
         {
           "id": "@cf/google/gemma-4-26b-a4b-it",
